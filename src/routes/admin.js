@@ -109,6 +109,32 @@ router.patch('/users/:id/approve', requireRole('admin'), async (req, res) => {
   return res.json(result.rows[0]);
 });
 
+router.delete('/users/:id/reject', requireRole('admin'), async (req, res) => {
+  const userId = Number(req.params.id);
+
+  const targetUser = await query(
+    'SELECT id, full_name, email, role, is_approved FROM users WHERE id = $1',
+    [userId]
+  );
+
+  if (!targetUser.rows[0]) {
+    return res.status(404).json({ message: 'Utilisateur introuvable' });
+  }
+
+  const candidate = targetUser.rows[0];
+
+  if (candidate.is_approved) {
+    return res.status(400).json({ message: 'Ce compte est deja approuve' });
+  }
+
+  if (req.user.role !== 'superadmin' && candidate.role !== 'researcher') {
+    return res.status(403).json({ message: 'Seul un superadmin peut rejeter ce compte' });
+  }
+
+  await query('DELETE FROM users WHERE id = $1', [userId]);
+  return res.json({ message: 'Compte refuse et supprime' });
+});
+
 router.patch('/users/:id/role', requireRole('superadmin'), async (req, res) => {
   const { id } = req.params;
   const userId = Number(id);
