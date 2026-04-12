@@ -18,7 +18,15 @@ export function authenticateToken(req, res, next) {
 
 export function requireRole(...allowedRoles) {
   return (req, res, next) => {
-    if (!req.user || !allowedRoles.includes(req.user.role)) {
+    if (!req.user) {
+      return res.status(403).json({ message: 'Acces refuse' });
+    }
+
+    if (req.user.role === 'superadmin') {
+      return next();
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ message: 'Acces refuse' });
     }
 

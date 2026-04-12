@@ -6,6 +6,7 @@ import { query } from '../db.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = Router();
+const assignableRoles = ['researcher', 'admin', 'superadmin'];
 
 const uploadsDir = path.resolve(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -65,9 +66,29 @@ router.get('/users/pending', requireRole('admin'), async (_req, res) => {
   res.json({ items: result.rows });
 });
 
+router.get('/users', requireRole('superadmin'), async (_req, res) => {
+  const result = await query(
+    `
+    SELECT id, full_name, email, speciality, role, is_approved
+    FROM users
+    ORDER BY id DESC
+    `
+  );
+
+  res.json({ items: result.rows });
+});
+
 router.patch('/users/:id/approve', requireRole('admin'), async (req, res) => {
   const { id } = req.params;
   const { role = 'researcher', speciality } = req.body;
+
+  if (!assignableRoles.includes(role)) {
+    return res.status(400).json({ message: 'Role invalide' });
+  }
+
+  if (req.user.role !== 'superadmin' && role !== 'researcher') {
+    return res.status(403).json({ message: 'Seul un superadmin peut attribuer ce role' });
+  }
 
   const result = await query(
     `
@@ -86,6 +107,75 @@ router.patch('/users/:id/approve', requireRole('admin'), async (req, res) => {
   }
 
   return res.json(result.rows[0]);
+});
+
+router.patch('/users/:id/role', requireRole('superadmin'), async (req, res) => {
+  const { id } = req.params;
+  const userId = Number(id);
+  const { role, speciality, isApproved } = req.body;
+
+  if (!role || !assignableRoles.includes(role)) {
+    return res.status(400).json({ message: 'Role invalide' });
+  }
+
+  if (Number(req.user.sub) === userId && role !== 'superadmin') {
+    return res.status(400).json({ message: 'Impossible de retrograder votre propre compte superadmin' });
+  }
+
+  if (role !== 'superadmin') {
+    const currentUser = await query('SELECT role FROM users WHERE id = $1', [userId]);
+    if (!currentUser.rows[0]) {
+      return res.status(404).json({ message: 'Utilisateur introuvable' });
+    }
+
+    if (currentUser.rows[0].role === 'superadmin') {
+      const superadminsCount = await query("SELECT COUNT(*)::int AS total FROM users WHERE role = 'superadmin'");
+      if (superadminsCount.rows[0].total <= 1) {
+        return res.status(400).json({ message: 'Le dernier superadmin ne peut pas etre retrograde' });
+      }
+    }
+  }
+
+  const result = await query(
+    `
+    UPDATE users
+    SET role = $1,
+        speciality = COALESCE($2, speciality),
+        is_approved = COALESCE($3, is_approved)
+    WHERE id = $4
+    RETURNING id, full_name, email, role, speciality, is_approved
+    `,
+    [role, speciality || null, typeof isApproved === 'boolean' ? isApproved : null, userId]
+  );
+
+  if (!result.rows[0]) {
+    return res.status(404).json({ message: 'Utilisateur introuvable' });
+  }
+
+  return res.json(result.rows[0]);
+});
+
+router.delete('/users/:id', requireRole('superadmin'), async (req, res) => {
+  const userId = Number(req.params.id);
+
+  if (Number(req.user.sub) === userId) {
+    return res.status(400).json({ message: 'Impossible de supprimer votre propre compte' });
+  }
+
+  const targetUser = await query('SELECT role FROM users WHERE id = $1', [userId]);
+  if (!targetUser.rows[0]) {
+    return res.status(404).json({ message: 'Utilisateur introuvable' });
+  }
+
+  if (targetUser.rows[0].role === 'superadmin') {
+    const superadminsCount = await query("SELECT COUNT(*)::int AS total FROM users WHERE role = 'superadmin'");
+    if (superadminsCount.rows[0].total <= 1) {
+      return res.status(400).json({ message: 'Impossible de supprimer le dernier superadmin' });
+    }
+  }
+
+  await query('DELETE FROM users WHERE id = $1', [userId]);
+  return res.status(204).send();
 });
 
 router.get('/projects', requireRole('admin', 'researcher'), async (_req, res) => {

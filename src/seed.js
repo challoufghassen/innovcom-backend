@@ -8,7 +8,7 @@ export async function seedIfEmpty() {
     `
     INSERT INTO users (full_name, email, password_hash, role, is_approved, speciality)
     VALUES
-      ('Admin InnovCom', 'admin@innovcom.local', $1, 'admin', TRUE, 'Gouvernance'),
+      ('Admin InnovCom', 'admin@innovcom.local', $1, 'superadmin', TRUE, 'Gouvernance'),
       ('Dr. Lina Bensalem', 'lina@innovcom.local', $1, 'researcher', TRUE, 'IA'),
       ('Dr. Sami Khoufi', 'sami@innovcom.local', $1, 'researcher', TRUE, 'Telecommunications')
     ON CONFLICT (email) DO UPDATE SET
