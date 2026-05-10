@@ -21,6 +21,33 @@ async function waitForDatabase(maxRetries = 20, delayMs = 2000) {
   }
 }
 
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+app.set('io', io);
+
+io.on('connection', (socket) => {
+  console.log(`[Socket] User connected: ${socket.id}`);
+  
+  socket.on('join', (userId) => {
+    socket.join(`user_${userId}`);
+    console.log(`[Socket] User ${userId} joined room user_${userId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`[Socket] User disconnected: ${socket.id}`);
+  });
+});
+
+export { io };
+
 async function bootstrap() {
   if (!process.env.DATABASE_URL) {
     throw new Error('DATABASE_URL est requis');
@@ -33,7 +60,7 @@ async function bootstrap() {
   await waitForDatabase();
   await seedIfEmpty();
 
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`InnovCom API running on port ${PORT}`);
   });
 }

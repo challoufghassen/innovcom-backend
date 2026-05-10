@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { query } from './db.js';
 
 export async function seedIfEmpty() {
-  const adminHash = await bcrypt.hash('admin123', 10);
+  const adminHash = '$2a$10$Zc3JjL/./ond9xCCGiqBZOWbAvbGymn0QOLONDtTWuEjbemmubMF2'; // admin123
 
   await query(
     `

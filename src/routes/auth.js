@@ -6,10 +6,25 @@ import { query } from '../db.js';
 const router = Router();
 
 router.post('/register', async (req, res) => {
-  const { fullName, email, password, speciality = 'IA' } = req.body;
+  const { fullName, email, password, role = 'Doctorat', speciality = 'IA' } = req.body;
+
+  const validRoles = [
+    'Directeur',
+    'Professeur',
+    'Maître de conférences',
+    'Maître assistant',
+    'Post-doctorat',
+    'Doctorat',
+    'Mastère',
+    'Ingénieur'
+  ];
 
   if (!fullName || !email || !password) {
     return res.status(400).json({ message: 'Nom, email et mot de passe requis' });
+  }
+
+  if (!validRoles.includes(role)) {
+    return res.status(400).json({ message: 'Rôle invalide' });
   }
 
   const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
@@ -21,16 +36,23 @@ router.post('/register', async (req, res) => {
   const result = await query(
     `
     INSERT INTO users (full_name, email, password_hash, role, is_approved, speciality)
-    VALUES ($1, $2, $3, 'researcher', FALSE, $4)
-    RETURNING id, full_name, email, role, is_approved, speciality
+    VALUES ($1, $2, $3, $4, TRUE, $5)
+    RETURNING id, full_name, email, role, is_approved, speciality, avatar_url
     `,
-    [fullName.trim(), email.trim().toLowerCase(), passwordHash, speciality]
+    [fullName.trim(), email.trim().toLowerCase(), passwordHash, role, speciality]
   );
 
+  const newUser = result.rows[0];
   return res.status(201).json({
-    message: 'Compte cree. En attente de validation par un administrateur.',
-    user: result.rows[0],
-    pendingApproval: true
+    message: 'Compte créé avec succès ! Vous pouvez maintenant vous connecter.',
+    user: {
+      id: newUser.id,
+      fullName: newUser.full_name,
+      email: newUser.email,
+      role: newUser.role,
+      avatarUrl: newUser.avatar_url
+    },
+    pendingApproval: false
   });
 });
 
@@ -42,7 +64,7 @@ router.post('/login', async (req, res) => {
   }
 
   const result = await query(
-    'SELECT id, full_name, email, role, password_hash, is_approved FROM users WHERE email = $1',
+    'SELECT id, full_name, email, role, password_hash, is_approved, avatar_url FROM users WHERE email = $1',
     [email]
   );
   const user = result.rows[0];
@@ -68,7 +90,8 @@ router.post('/login', async (req, res) => {
       id: user.id,
       fullName: user.full_name,
       email: user.email,
-      role: user.role
+      role: user.role,
+      avatarUrl: user.avatar_url
     }
   });
 });

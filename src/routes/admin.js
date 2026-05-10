@@ -6,7 +6,26 @@ import { query } from '../db.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = Router();
-const assignableRoles = ['researcher', 'admin', 'superadmin'];
+
+async function trackUpdate(title) {
+  try {
+    await query('UPDATE home_content SET last_update_title = $1, last_update_at = CURRENT_TIMESTAMP', [title]);
+  } catch (err) {
+    console.error('Failed to track update:', err);
+  }
+}
+const assignableRoles = [
+  'admin',
+  'superadmin',
+  'Directeur',
+  'Professeur',
+  'Maître de conférences',
+  'Maître assistant',
+  'Post-doctorat',
+  'Doctorat',
+  'Mastère',
+  'Ingénieur'
+];
 
 const uploadsDir = path.resolve(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -35,7 +54,7 @@ const uploadPdf = multer({
 
 router.use(authenticateToken);
 
-router.get('/dashboard', requireRole('admin', 'researcher'), async (_req, res) => {
+router.get('/dashboard', async (_req, res) => {
   const [users, projects, publications, events] = await Promise.all([
     query('SELECT COUNT(*)::int AS total FROM users'),
     query('SELECT COUNT(*)::int AS total FROM projects'),
@@ -205,38 +224,41 @@ router.delete('/users/:id', requireRole('superadmin'), async (req, res) => {
 });
 
 router.get('/projects', requireRole('admin', 'researcher'), async (_req, res) => {
-  const result = await query('SELECT id, title, description, technologies, status FROM projects ORDER BY created_at DESC');
+  const result = await query('SELECT id, title, description, technologies, status, team, partners, details, results, background_color FROM projects ORDER BY created_at DESC');
   res.json({ items: result.rows });
 });
 
 router.post('/projects', requireRole('admin'), async (req, res) => {
-  const { title, description, technologies, status } = req.body;
+  const { title, team, partners, details, results, backgroundColor } = req.body;
+  const userId = Number(req.user.sub);
 
-  if (!title || !description || !technologies || !status) {
-    return res.status(400).json({ message: 'Tous les champs projet sont requis' });
+  if (!title) {
+    return res.status(400).json({ message: 'Le titre est requis' });
   }
 
   const result = await query(
-    'INSERT INTO projects (title, description, technologies, status) VALUES ($1, $2, $3, $4) RETURNING id, title, description, technologies, status',
-    [title, description, technologies, status]
+    'INSERT INTO projects (title, description, technologies, status, team, partners, details, results, background_color, user_id) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9, $10) RETURNING id, title, team, partners, details, results, background_color',
+    [title, title, 'N/A', 'Publié', team || '', partners || '', details || '', results || '', backgroundColor || '#FFFFFF', userId]
   );
 
+  await trackUpdate(`Nouveau Projet: ${title}`);
   return res.status(201).json(result.rows[0]);
 });
 
 router.put('/projects/:id', requireRole('admin'), async (req, res) => {
-  const { title, description, technologies, status } = req.body;
+  const { title, team, partners, details, results, backgroundColor } = req.body;
   const { id } = req.params;
 
   const result = await query(
-    'UPDATE projects SET title = $1, description = $2, technologies = $3, status = $4 WHERE id = $5 RETURNING id, title, description, technologies, status',
-    [title, description, technologies, status, id]
+    'UPDATE projects SET title = $1, team = $2, partners = $3, details = $4, results = $5, background_color = $6 WHERE id = $7 RETURNING id, title, team, partners, details, results, background_color',
+    [title, team, partners, details, results, backgroundColor || '#FFFFFF', id]
   );
 
   if (!result.rows[0]) {
     return res.status(404).json({ message: 'Projet introuvable' });
   }
 
+  await trackUpdate(`Projet mis a jour: ${title}`);
   return res.json(result.rows[0]);
 });
 
@@ -251,9 +273,18 @@ router.delete('/projects/:id', requireRole('admin'), async (req, res) => {
   return res.status(204).send();
 });
 
-router.post('/publications/upload', requireRole('admin'), uploadPdf.single('file'), async (req, res) => {
+router.post('/publications/upload', requireRole('admin'), (req, res, next) => {
+  uploadPdf.single('file')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ message: `Erreur Multer: ${err.message}` });
+    } else if (err) {
+      return res.status(400).json({ message: err.message });
+    }
+    next();
+  });
+}, async (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ message: 'Aucun fichier PDF recu' });
+    return res.status(400).json({ message: 'Aucun fichier PDF reçu' });
   }
 
   return res.status(201).json({
@@ -263,36 +294,38 @@ router.post('/publications/upload', requireRole('admin'), uploadPdf.single('file
 });
 
 router.get('/publications', requireRole('admin', 'researcher'), async (_req, res) => {
-  const result = await query('SELECT id, title, authors, venue, pdf_url FROM publications ORDER BY created_at DESC');
+  const result = await query('SELECT id, title, authors, venue, pdf_url, background_color FROM publications ORDER BY created_at DESC');
   res.json({ items: result.rows });
 });
 
 router.post('/publications', requireRole('admin'), async (req, res) => {
-  const { title, authors, venue, pdf_url } = req.body;
+  const { title, authors, venue, pdf_url, backgroundColor } = req.body;
 
   if (!title || !authors || !venue) {
     return res.status(400).json({ message: 'Les champs titre, auteurs et revue sont requis' });
   }
 
   const result = await query(
-    'INSERT INTO publications (title, authors, venue, pdf_url) VALUES ($1, $2, $3, $4) RETURNING id, title, authors, venue, pdf_url',
-    [title, authors, venue, pdf_url || null]
+    'INSERT INTO publications (title, authors, venue, pdf_url, background_color) VALUES ($1, $2, $3, $4, $5) RETURNING id, title, authors, venue, pdf_url, background_color',
+    [title, authors, venue, pdf_url || null, backgroundColor || '#FFFFFF']
   );
 
+  await trackUpdate(`Nouvelle Publication: ${title}`);
   return res.status(201).json(result.rows[0]);
 });
 
 router.put('/publications/:id', requireRole('admin'), async (req, res) => {
-  const { title, authors, venue, pdf_url } = req.body;
+  const { title, authors, venue, pdf_url, backgroundColor } = req.body;
   const result = await query(
-    'UPDATE publications SET title = $1, authors = $2, venue = $3, pdf_url = $4 WHERE id = $5 RETURNING id, title, authors, venue, pdf_url',
-    [title, authors, venue, pdf_url || null, req.params.id]
+    'UPDATE publications SET title = $1, authors = $2, venue = $3, pdf_url = $4, background_color = $5 WHERE id = $6 RETURNING id, title, authors, venue, pdf_url, background_color',
+    [title, authors, venue, pdf_url || null, backgroundColor || '#FFFFFF', req.params.id]
   );
 
   if (!result.rows[0]) {
     return res.status(404).json({ message: 'Publication introuvable' });
   }
 
+  await trackUpdate(`Publication mise a jour: ${title}`);
   return res.json(result.rows[0]);
 });
 
@@ -318,26 +351,38 @@ router.post('/events', requireRole('admin'), async (req, res) => {
     return res.status(400).json({ message: 'Tous les champs evenement sont requis' });
   }
 
-  const result = await query(
-    'INSERT INTO events (title, description, date, location) VALUES ($1, $2, $3, $4) RETURNING id, title, description, date::text, location',
-    [title, description, date, location]
-  );
+  try {
+    const result = await query(
+      'INSERT INTO events (title, description, date, location) VALUES ($1, $2, $3, $4) RETURNING id, title, description, date::text, location',
+      [title, description, date, location]
+    );
 
-  return res.status(201).json(result.rows[0]);
+    await trackUpdate(`Nouvel Evenement: ${title}`);
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('Error creating event:', err);
+    return res.status(500).json({ message: 'Erreur lors de la création de l\'événement: ' + err.message });
+  }
 });
 
 router.put('/events/:id', requireRole('admin'), async (req, res) => {
   const { title, description, date, location } = req.body;
-  const result = await query(
-    'UPDATE events SET title = $1, description = $2, date = $3, location = $4 WHERE id = $5 RETURNING id, title, description, date::text, location',
-    [title, description, date, location, req.params.id]
-  );
+  try {
+    const result = await query(
+      'UPDATE events SET title = $1, description = $2, date = $3, location = $4 WHERE id = $5 RETURNING id, title, description, date::text, location',
+      [title, description, date, location, req.params.id]
+    );
 
-  if (!result.rows[0]) {
-    return res.status(404).json({ message: 'Evenement introuvable' });
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Evenement introuvable' });
+    }
+
+    await trackUpdate(`Evenement mis a jour: ${title}`);
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error updating event:', err);
+    return res.status(500).json({ message: 'Erreur lors de la mise à jour: ' + err.message });
   }
-
-  return res.json(result.rows[0]);
 });
 
 router.delete('/events/:id', requireRole('admin'), async (req, res) => {
@@ -348,6 +393,50 @@ router.delete('/events/:id', requireRole('admin'), async (req, res) => {
   }
 
   return res.status(204).send();
+});
+
+// Session Management
+router.get('/events/:eventId/sessions', requireRole('admin', 'researcher'), async (req, res) => {
+  const result = await query('SELECT id, event_id, title, description, speaker_name, start_time::text, end_time::text, day FROM event_sessions WHERE event_id = $1 ORDER BY day ASC, start_time ASC', [req.params.eventId]);
+  res.json(result.rows);
+});
+
+router.post('/events/:eventId/sessions', requireRole('admin'), async (req, res) => {
+  try {
+    const { title, description, speaker_name, start_time, end_time, day } = req.body;
+    if (!title || !start_time || !end_time || !day) {
+      return res.status(400).json({ message: 'Titre, debut, fin et jour sont requis' });
+    }
+    const result = await query(
+      'INSERT INTO event_sessions (event_id, title, description, speaker_name, start_time, end_time, day) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, event_id, title, description, speaker_name, start_time::text, end_time::text, day',
+      [req.params.eventId, title, description, speaker_name, start_time, end_time, day]
+    );
+    await trackUpdate(`La session '${title}' a ete ajoutee`);
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating session:', error);
+    res.status(500).json({ message: 'Erreur lors de la création de la session: ' + error.message });
+  }
+});
+
+router.put('/events/sessions/:id', requireRole('admin'), async (req, res) => {
+  try {
+    const { title, description, speaker_name, start_time, end_time, day } = req.body;
+    const result = await query(
+      'UPDATE event_sessions SET title = $1, description = $2, speaker_name = $3, start_time = $4, end_time = $5, day = $6 WHERE id = $7 RETURNING id, event_id, title, description, speaker_name, start_time::text, end_time::text, day',
+      [title, description, speaker_name, start_time, end_time, day, req.params.id]
+    );
+    await trackUpdate(`La session '${title}' a ete mise a jour`);
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating session:', error);
+    res.status(500).json({ message: 'Erreur lors de la mise à jour: ' + error.message });
+  }
+});
+
+router.delete('/events/sessions/:id', requireRole('admin'), async (req, res) => {
+  await query('DELETE FROM event_sessions WHERE id = $1', [req.params.id]);
+  res.status(204).send();
 });
 
 router.get('/home-content', requireRole('admin', 'researcher'), async (_req, res) => {
