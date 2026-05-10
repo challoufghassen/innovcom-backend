@@ -116,6 +116,7 @@ export async function initializeDatabase() {
   `);
 
   await query(`ALTER TABLE home_content ADD COLUMN IF NOT EXISTS last_update_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+  await query(`ALTER TABLE home_content ADD COLUMN IF NOT EXISTS last_update_title VARCHAR(220)`);
   
   // Seed home content if table is empty
   const checkHome = await query('SELECT id FROM home_content LIMIT 1');
